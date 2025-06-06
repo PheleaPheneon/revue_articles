@@ -1,0 +1,47 @@
+L’article étudié porte sur les méthodes utilisées par l’acteur Water Gamayun pour infecter des systèmes. Ce groupe utilise trois vulnérabilités présentes dans les fichiers de type .MSC.
+La première question qui m’est venue à l’esprit en lisant l’article (en tant que débutante en architecture Windows) a été « qu’est-ce que sont les fichiers .MSC » et « à quoi servent ils » (et personnellement, c’est comprendre leur utilité qui m’a permis de comprendre ce que sont les fichiers .MSC)
+
+I.	Les fichiers .MSC, c’est quoi ?
+
+Les fichiers .MSC répondent à la problématique suivante : comment centraliser au sein d’un outils Windows l’administration d’applications faites par des éditeurs différents. Cela nécessite une normalisation de l’administration des applications : c’est là qu’interviennent les fichiers .MSC. Ils servent d’interfaces normés entre le système Windows et les applications.
+Pour cela ils sont utilisés par le MMC : : il s’agit d’une application qui donne un des outils de programmation qui permet de créer, accéder et sauvegarder des outils d’administration pour les différentes applications et composant de Windows et d’avoir un GUI pour représenter ses outils. Les outils en question sont les fichiers .MSC. Les fichiers .MSC sont ouverts par l’application mmc.exe on les appelle alors des snaps-in.
+Les fichiers .MSC répondent à la norme COM (Microsoft Component Object Model) qui est une norme leur permettant de communiquer avec de nombreux programmes. Les objets COM sont composés d’un jeu de données et de fonctions pour les manipuler. Seules Ces fonctions peuvent manipuler les données : cela permet d’imposer des contrôles et de sécuriser leur manipulation.
+Un exemple de snaps-in est l’outils du management du par-feu.
+
+II.	Les 3 différentes méthodes
+
+a.	MSC EvilTwin (CVE-2025-26633)
+La première attaque exploite le MUI du système .MSC. Le programme mmc.exe et l’organisation des fichiers .MSC sont conçu pour permettre aux créateurs des fichiers de mettre des données relatives à des langues particulières : les .MUI, les emplacements de ces données sont stockés dans le MUIPath et sont donc lu et chargé à l’exécution d’un .MSC.
+Quel est le problème et comment cela a-t-il pu être exploité ?   L’attaquant (le créateur de l’application téléchargée) a pu insérer le lien d’un .MSC dans le MUIPath. Ce fichier se trouve dans un dossier /en-US. Ensuite lors de l’execution du .MSC légitime le programme mmc.exe charge le fichier malicieux au lieu du .MSC légitime.
+Question : Pourquoi le .MSC dans le fichier /en-US est-il celui exécuté ? Y a-t-il une priorité aux fichiers contenus dans ce dossier ? 
+
+b.	Execute du code shell dans une vue web
+L’idée de cette technique est de faire ouvrir une page web depuis le mmc.exe grâce à une faille de l’objet mmc « Shockwave Flash Object », un objet du snap in de l’application adob shockwave. La fenêtre web est ouverte non pas dans le navigateur mais dans le contexte d’un objet View, qui est un objet de mmc.exe qui permet de visualiser une autre application dans le contexte du programme mmc.exe. Cet objet comprend le langage script PowerShell. Ainsi lorsque la page internet affiche une commande PowerShell et l’objet view la lit et l’exécute, c’est comme une injection XSS mais le code dans la balise script est en PowerShell au lieu d’être en java. La commande est donc exécutée dans le contexte du programme mmc.exe (donc on a déjà un certain niveau de privilège).
+
+c.	Exploite la confusion sur l’espace
+La dernière technique consiste à exploiter une confusion sur le caractère ‘ ‘ (donc l’espace) dans les noms de fichier. Le système de fichier Windows le reconnait comme un caractère distinct, donc un dossier \ abcd est différent pour lui qu’un dossier \abcd. Pour l’interpréteur de mmc.exe par contre l’espace n’existe pas : quand le nom de dossier donné est \ abcd le programme mmc.exe lit, durant ses vérifications, \abcd. Ainsi l’attaquant peut stocker un code malveillant dans u dossier copiant un registre existant et important en rajoutant un espace. Le système de fichiers Windows le considèrera comme un nouveau dossier tandis que le programme mmc.exe pendant ses vérifications pensera qu’il s’agit de code stocké dans un registre de confiance et en conséquence l’exécutera. 
+
+
+III.	Le déroulement de l’attaque
+L’attaque commence par le téléchargement d’une application se faisant passer pour un .MSI, un fichier de téléchargement Windows, d’applications chinoises populaires (DingTalk  ou QQTalk), mais ce qui est téléchargé est le virus. Durant le téléchargement du code et la création des fichiers d’administration deux snaps-in (consoles d’administration) sont créées dans C:\Windows \System32 et C:\Windows \System32\en-US. Ces deux noms de dossier imitent les noms du dossier légitime C:\Windows\System32 en utilisant la technique [3] permettant qu’il n’y ai pas plus de vérification lors de l’exécution du snaps in. On remarque la création d’un dossier en-US : la technique [1] est utilisée. La première console, celle téléchargée dans le dossier C:\Windows \System32 comporte du code légitime et non dangereux. Le but de ce code et que lors du téléchargement il soit considéré comme non dangereux et que tout soit téléchargé sans problèmes. La deuxième console, celle téléchargée dans C:\Windows \System32\en-US est la console malveillante qui va être utilisée pour mener l’attaque.
+Dans le MUI path se trouve le chemin vers le fichier dans C:\Windows \System32\en-US. Cette console est donc exécutée au lieu de celle dans le dossier C:\Windows \System32 comme les consoles dans le dossier en-US (qui ici n’a pas été vérifié lors du téléchargement grâce à la technique [1]) ont la priorité pour l’exécution. 
+La console (après le téléchargement et l’installation par le loader) a l’URL du C&C de l’attaquant. Cette url est dans une balise <string>. Le mmc.exe, qui est le programme lisant et interprétant le snaps-in (la console) charge automatiquement la page car il a en permanence le snap in ActiveX control [2]. Sur l’url se trouve (de fil en aiguille) un script PowerShell qui se trouve dans une basile « script ». Ce script est donc exécuté par l’objet View dans le contexte du programme mmc.exe [2].
+
+Suite à la lecture de cet article il me reste quelque question que je vais lister ici. Comme il me manque des connaissances certaines pourront sembler naïves. 
+Lors du téléchargement de programmes, l’anti-virus ne vérifie pas l’ensemble des codes ? Dans ce quoi pourquoi le deuxième snap-in (celui dans le dossier en-US) n’était-il pas vérifié ?
+Où et comment est stocké le MUI Path ?
+Pourquoi le programme mmc.exe exécute un snap in en utilisant les méthodes du snap in ActiveX Contrôle ? 
+Dans le cas de l’exécution de la playload finale les permissions sont elles celle de l’utilisateur ayant lancer le programme initialement (donc la personne ayant téléchargé l’installateur frauduleux) ou viennent-elles de l’application mmc.exe (comme le code est exécuté dans le contexte de cette application) ? Si c’est le cas qu’elles sont les permissions plus précisément ? 
+Le fichier .WMI se déguise comme un fichier d’installation d’applications chinoises : la population chinoise est elle visée particulièrement (cette question est plutôt rhétorique) et pourquoi ?
+Merci d’avoir lu jusque-là. Je vous conseille d’aller également consulter l’article d’origine qui est très intéressant (et bien sûr plus complet).
+
+Sources : 
+https://www.trendmicro.com/en_us/research/25/c/cve-2025-26633-water-gamayun.html#:~:text=Trend%20Research%20uncovered%20a%20campaign%20by%20the%20Russian,to%20execute%20malicious%20code%2C%20named%20MSC%20EvilTwin%20%28CVE-2025-26633%29.
+https://learn.microsoft.com/fr-fr/windows/win32/com/the-component-object-model
+https://learn.microsoft.com/en-us/previous-versions/windows/desktop/mmc/mmc-console-files
+https://learn.microsoft.com/nl-nl/previous-versions/windows/desktop/mmc/view-executeshellcommand
+https://learn.microsoft.com/en-us/previous-versions/windows/desktop/mmc/view-object
+https://support.microsoft.com/fr-fr/windows/contrôles-activex-obsolètes-3ad33b2d-1cee-5d46-1234-e70714324850#:~:text=Les%20contrôles%20ActiveX%20sont%20de,vous%20naviguez%20sur%20le%20web.
+
+
+
